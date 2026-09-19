@@ -1,0 +1,33 @@
+classDiagram
+    class Member {
+        MemberId id
+        MemberName name
+        LoanLimit loanLimit
+        borrow(BookCopy, LoanDate)
+        returnBook(BookCopy, LoanId, ReturnDate)
+    }
+
+    class Book {
+        ISBN isbn
+        BookTitle title
+    }
+
+    class BookCopy {
+        BookCopyId id
+        ISBN isbn
+        LendingStatus status
+    }
+
+    class Loan {
+        LoanId id
+        MemberId memberId
+        BookCopyId bookCopyId
+        LoanPeriod period
+        ReturnDate? returnedAt
+        returnOn(ReturnDate)
+        isOverdue(OnDate)
+    }
+
+    Member "1" --> "*" Loan : manages
+    Book "1" --> "*" BookCopy : has
+    Loan "*" --> "1" BookCopy : targets
