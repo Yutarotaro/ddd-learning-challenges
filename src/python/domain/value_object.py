@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from enum import StrEnum
-from uuid import UUID
+
+import uuid
 from typing import Self
 
 ## Value Objects
@@ -12,6 +13,8 @@ class ISBN:
     def __post_init__(self):
         if not self.value:
             raise ValueError("ISBN cannot be empty")
+        if self.value.strip() == "":
+            raise ValueError("ISBN cannot be whitespace only")
 
     def __str__(self):
         return self.value
@@ -23,6 +26,8 @@ class BookTitle:
     def __post_init__(self):
         if not self.value:
             raise ValueError("Book title cannot be empty")
+        if self.value.strip() == "":
+            raise ValueError("Book title cannot be whitespace only")
 
     def __str__(self):
         return self.value
@@ -34,6 +39,8 @@ class BookCopyId:
     def __post_init__(self):
         if not self.value:
             raise ValueError("BookCopyId cannot be empty")
+        if self.value.strip() == "":
+            raise ValueError("BookCopyId cannot be whitespace only")
 
     def __str__(self):
         return self.value
@@ -50,7 +57,7 @@ class MemberId:
     """
     利用者ID
     """
-    value: UUID
+    value: uuid.UUID
 
     def __str__(self):
         return str(self.value)
@@ -60,7 +67,7 @@ class MemberId:
         """
         新しい利用者IDを生成する
         """
-        return cls(value=UUID(int=UUID().int))
+        return cls(value=uuid.uuid4())
 
 @dataclass(frozen=True, slots=True)
 class MemberName:
@@ -70,18 +77,14 @@ class MemberName:
     value: str
 
     def __post_init__(self):
-        if not self.value:
+        if not isinstance(self.value, str):
+            raise TypeError("Name must be a string")
+        if len(self.value) == 0:
             raise ValueError("Member name cannot be empty")
-
-    def from_string(cls, name: str) -> Self:
-        """
-        文字列からMemberNameを生成する
-        """
-        if len(name) == 0:
-            raise ValueError("Member name cannot be empty")
-        if len(name) > 50:
+        if len(self.value) > 50:
             raise ValueError("Member name cannot exceed 50 characters")
-        return cls(value=name)
+        if self.value.strip() == "":
+            raise ValueError("Member name cannot be whitespace only")
 
     def __str__(self):
         return self.value
