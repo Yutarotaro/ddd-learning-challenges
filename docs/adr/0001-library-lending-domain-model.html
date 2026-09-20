@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ADR 0001: 図書貸出ドメインモデルの集約境界と操作責務</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; line-height: 1.7; }
+    body { margin: 0; background: Canvas; color: CanvasText; }
+    main { max-width: 920px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    h1, h2, h3 { line-height: 1.3; }
+    h1 { border-bottom: 3px solid #4f46e5; padding-bottom: .6rem; }
+    h2 { margin-top: 2.5rem; border-bottom: 1px solid GrayText; padding-bottom: .3rem; }
+    h3 { margin-top: 1.8rem; }
+    a { color: #4f46e5; }
+    .meta { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; padding: 1rem; border: 1px solid GrayText; border-radius: .5rem; }
+    .meta dt { font-weight: 700; }
+    .meta dd { margin: 0; }
+    code { padding: .1rem .3rem; border-radius: .25rem; background: color-mix(in srgb, CanvasText 10%, Canvas); }
+    pre { overflow-x: auto; padding: 1rem; border-radius: .5rem; background: color-mix(in srgb, CanvasText 8%, Canvas); }
+    pre code { padding: 0; background: transparent; }
+    li + li { margin-top: .3rem; }
+    .decision { border-left: .3rem solid #4f46e5; padding-left: 1rem; }
+    @media (prefers-color-scheme: dark) { a { color: #a5b4fc; } }
+  </style>
+</head>
+<body>
+<main>
+  <article>
+    <h1>ADR 0001: 図書貸出ドメインモデルの集約境界と操作責務</h1>
+    <dl class="meta">
+      <dt>Status</dt><dd>Accepted</dd>
+      <dt>Date</dt><dd>2026-09-19</dd>
+      <dt>Related</dt><dd><a href="https://github.com/Yutarotaro/ddd-learning-challenges/issues/1">Issue #1</a></dd>
+    </dl>
+
+    <h2>Context</h2>
+    <p>図書貸出ドメインでは、会員ごとの貸出上限、同一蔵書の重複貸出、延滞中の新規貸出停止、返却時の貸出と蔵書の同時変更をDomain自身が保護する必要がある。</p>
+    <p><code>Member</code>、<code>Loan</code>、<code>BookCopy</code>をすべて独立したAggregate Rootにすると、会員に属する複数の貸出を横断した判定がApplicationへ漏れる。反対に、すべてを1つのAggregateに含めると、蔵書の独立したライフサイクルと永続化境界が失われる。</p>
+    <p>また、DomainからRepositoryを呼び出すと、ビジネスルールと永続化の調整が混ざる。貸出・返却の操作では、Domainの整合性を守りながら、別Aggregateの取得と保存をUse Caseへ委ねる境界が必要である。</p>
+
+    <h2>Decision</h2>
+    <div class="decision">
+      <h3>1. Aggregate境界</h3>
+      <p><code>Member</code>をAggregate Rootとし、その会員に属する<code>Loan</code>を内部Entityとして管理する。</p>
+      <pre><code>Member Aggregate
+└── Member（Aggregate Root）
+    └── Loan[]（内部Entity）</code></pre>
+      <p><code>BookCopy</code>は、貸出可能または貸出中という状態を管理する独立したAggregate Rootとする。</p>
+      <pre><code>BookCopy Aggregate
+└── BookCopy（Aggregate Root）</code></pre>
+      <p><code>Loan</code>は<code>LoanId</code>で識別されるEntityだが、独立したAggregate Rootにはしない。<code>LoanRepository</code>は作らず、<code>MemberRepository</code>がLoanを含むMember Aggregate全体を保存・復元する。</p>
+
+      <h3>2. Aggregate間の参照</h3>
+      <p><code>Loan</code>は<code>BookCopy</code>オブジェクトを保持せず、<code>BookCopyId</code>で参照する。<code>BookCopy</code>は現在の<code>LoanId</code>を保持しない。</p>
+      <pre><code>Member 1 *-- 0..* Loan
+Loan   * --&gt; 1 BookCopy : BookCopyId</code></pre>
+      <p>これにより、<code>Member</code>と<code>BookCopy</code>のAggregate境界を維持し、相互参照による状態同期を避ける。</p>
+      <p><code>Loan</code>の<code>MemberId</code>は、貸出が属する会員を示す属性として保持する。Member Aggregate内では所属関係と重複するが、永続化データやドメインイベントで貸出の所属を明示できる。</p>
+
+      <h3>3. 貸出操作</h3>
+      <p>貸出操作の入口は<code>Member.borrow(book_copy, loan_date)</code>とする。</p>
+      <p><code>Member</code>は自身が保持するLoan一覧を使用して、次の不変条件を検証する。</p>
+      <ul>
+        <li>未返却の貸出が貸出上限未満である</li>
+        <li>延滞中の未返却Loanがない</li>
+        <li>同じ<code>BookCopy</code>の未返却Loanがない</li>
+        <li>渡された<code>BookCopy</code>が貸出可能である</li>
+      </ul>
+      <p>すべての検証が成功した後、<code>Loan.start()</code>で新しいLoanを生成してMemberへ追加し、<code>BookCopy.lend()</code>で蔵書を貸出中にする。</p>
+      <p><code>Loan.start()</code>は新規貸出用のFactory Methodとする。<code>Loan.__init__</code>も不変条件を検証し、Factory以外の生成経路やRepositoryからの復元でも不正なLoanを保持できないようにする。</p>
+
+      <h3>4. 返却操作</h3>
+      <p>外部からUse Caseへ渡す入力は、<code>MemberId</code>、<code>LoanId</code>、返却日とする。Use CaseはMemberから返却対象Loanの<code>BookCopyId</code>を取得し、BookCopy Repositoryから対応するBookCopyを取得する。</p>
+      <p>Domain操作の入口は<code>Member.return_book(book_copy, loan_id, return_date)</code>とする。</p>
+      <p><code>Member</code>は次の内容を状態変更前に検証する。</p>
+      <ul>
+        <li>LoanがMemberに属する</li>
+        <li>Loanが未返却である</li>
+        <li>返却日が貸出日以降である</li>
+        <li>Loanの<code>BookCopyId</code>と渡されたBookCopyのIDが一致する</li>
+        <li>BookCopyが貸出中である</li>
+      </ul>
+      <p>すべての検証が成功した後、Loanへ返却日を記録し、BookCopyを貸出可能に戻す。</p>
+      <p>BookCopyを引数として受け取るのは、DomainからRepositoryを参照せず、1回のDomain操作でLoanとBookCopyの状態を変更するためである。IDの一致確認は、誤ったBookCopyを返却状態へ変更しないための不変条件とする。</p>
+
+      <h3>5. Use Caseの責務</h3>
+      <ol>
+        <li>RepositoryからMemberとBookCopyを取得する</li>
+        <li><code>Member.borrow()</code>または<code>Member.return_book()</code>を呼び出す</li>
+        <li>変更されたMemberとBookCopyを保存する</li>
+        <li>永続化時のトランザクションを管理する</li>
+      </ol>
+      <p>EntityやDomain ServiceからRepositoryを呼び出さない。DomainはApplication、Infrastructure、DB、SDK、ORM、環境変数へ依存しない。</p>
+
+      <h3>6. Loanの状態と日付</h3>
+      <p>Domain内の日付は、時刻を含まない暦日を表す<code>datetime.date</code>に統一する。文字列との変換はApplicationまたはInfrastructureの境界で行う。</p>
+      <p><code>LoanPeriod</code>はValue Objectとし、貸出日を保持して返却期限を貸出日の13日後として導出する。</p>
+      <p>Loanの永続的な状態は、未返却と返却済みの2つとする。</p>
+      <ul>
+        <li><code>returned_at is None</code>: 未返却</li>
+        <li><code>returned_at is not None</code>: 返却済み</li>
+      </ul>
+      <p>延滞は保存する状態ではなく、未返却であり、かつ判定日が返却期限より後である場合に導出する。</p>
+      <ul>
+        <li><code>LoanPeriod.is_past_due(on_date)</code>: 判定日が期限を過ぎている</li>
+        <li><code>Loan.is_overdue(on_date)</code>: 未返却かつ期限を過ぎている</li>
+        <li><code>Loan.was_returned_late</code>: 期限後に返却された</li>
+      </ul>
+      <p>返却期限当日は延滞とせず、翌日から延滞とする。</p>
+
+      <h3>7. コードの配置</h3>
+      <p>ファイルは<code>entity.py</code>、<code>aggregate.py</code>のようなDDD上の役割ではなく、ドメイン用語を基準に分割する。</p>
+      <pre><code>domain/
+├── member.py
+├── loan.py
+├── book.py
+├── book_copy.py
+└── errors.py</code></pre>
+      <p>Value Objectは、最も関係が深いドメイン概念と同じファイルへ置く。複数の概念で共有され、独立したルールを持つ型だけを共通モジュールへ分離する。</p>
+    </div>
+
+    <h2>Alternatives Considered</h2>
+    <h3>Loanを独立したAggregate Rootにする</h3>
+    <p>採用しない。会員の貸出上限、延滞、重複貸出を判定するために複数Loanの検索が必要となり、Member Aggregateだけで不変条件を保護できない。</p>
+    <h3>BookCopyに現在のLoanIdを保持する</h3>
+    <p>採用しない。LoanとBookCopyの相互参照が生まれ、Loanの<code>BookCopyId</code>、BookCopyの<code>LoanId</code>、BookCopyの貸出状態を同期する必要がある。現在の要件ではBookCopyは貸出可否だけを知れば責務を果たせる。</p>
+    <h3>MemberからRepositoryを呼び出してBookCopyを取得する</h3>
+    <p>採用しない。Domain Entityが永続化へ依存し、単体テストと責務の分離が悪化する。取得と保存はUse Caseが担当する。</p>
+    <h3>返却時にLoanだけを先に変更する</h3>
+    <p>採用しない。BookCopyの取得または状態変更に失敗すると、Loanは返却済みだがBookCopyは貸出中という不整合な状態になる。状態変更前に両Aggregateを揃え、1回のDomain操作で検証・変更する。</p>
+    <h3>LoanDate、DueDate、ReturnDateをすべて独自クラスにする</h3>
+    <p>現時点では採用しない。個別の日付に独自の制約がないため、標準の<code>datetime.date</code>を使用する。日付間のドメインルールは<code>LoanPeriod</code>と<code>Loan</code>へ置く。</p>
+    <h3>Domain Serviceへ貸出・返却処理を置く</h3>
+    <p>現時点では採用しない。貸出上限、延滞、重複貸出はMemberが保持するLoan一覧から判断できるため、Member Aggregate Rootの振る舞いとして自然である。将来、図書館カレンダーや会員区分など、どのEntityにも自然に属さない規則が追加された場合はDomain Serviceを再検討する。</p>
+
+    <h2>Consequences</h2>
+    <h3>Positive</h3>
+    <ul>
+      <li>Memberだけで会員単位の貸出不変条件を保護できる</li>
+      <li>BookCopyは自身の貸出状態だけに集中できる</li>
+      <li>DomainをRepositoryやDBから分離できる</li>
+      <li>貸出・返却の失敗時に、MemberとBookCopyの状態を変更しない実装が可能になる</li>
+      <li>Use Caseの入力とDomainメソッドの引数を分離できる</li>
+      <li>日付と延滞の境界条件を明示的にテストできる</li>
+    </ul>
+    <h3>Negative</h3>
+    <ul>
+      <li>貸出・返却ではMemberとBookCopyの2つのAggregateを取得・保存する必要がある</li>
+      <li>永続化時の原子性をApplicationとInfrastructureで保証する必要がある</li>
+      <li>返却時にLoanとBookCopyのID一致を検証する必要がある</li>
+      <li>Member AggregateのLoan件数が増える場合は、読み込み量やAggregate境界を再検討する必要がある</li>
+    </ul>
+
+    <h2>Validation</h2>
+    <ul>
+      <li>貸出成功時にMemberへLoanが追加され、BookCopyが貸出中になる</li>
+      <li>貸出上限、貸出中、延滞中、重複貸出の失敗時に両Aggregateが変化しない</li>
+      <li>返却成功時にLoanへ返却日が記録され、BookCopyが貸出可能になる</li>
+      <li>貸出日前返却、二重返却、LoanとBookCopyの不一致の失敗時に両Aggregateが変化しない</li>
+      <li>返却期限当日は延滞ではなく、翌日は延滞になる</li>
+      <li>返却済みLoanは判定日が期限より後でも延滞にならない</li>
+    </ul>
+  </article>
+</main>
+</body>
+</html>
