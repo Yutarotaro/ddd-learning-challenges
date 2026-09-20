@@ -78,15 +78,14 @@ class Loan:
         """
         return self._returned_date is not None
 
-    @property
-    def is_overdue(self, returned_at: date | None = None) -> bool:
+    def is_overdue(self, on_date: date | None = None) -> bool:
         """
         貸出が期限切れかどうかを判定する
         """
         if self.is_returned:
             return False  # 返却済みの場合は期限切れではない
 
-        today = returned_at or date.today()  # 引数がNoneの場合は今日の日付を使用
+        today = on_date or date.today()  # 引数がNoneの場合は今日の日付を使用
         return (
             today > self._loan_period.due_date
         )  # 今日の日付が返却期限日を過ぎているかどうかを判定
@@ -119,8 +118,8 @@ class Loan:
         if self.is_returned:
             raise ValueError("This loan is already returned")
 
-        if self.returned_date < self.loan_date:
+        if returned_date < self._loan_date:
             raise ValueError("The return date must be after the loan date")
 
         # ========== 貸出を返却済みにする ========
-        self.returned_date = returned_date
+        self._returned_date = returned_date

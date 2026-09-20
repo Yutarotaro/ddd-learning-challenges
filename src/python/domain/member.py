@@ -1,4 +1,4 @@
-from .errors import LoanLimitExceededError
+from .errors import LoanLimitExceededError, NotFoundError
 from .loan import Loan, LoanLimit
 from .value_objects import BookCopyId, LoanId, MemberId
 
@@ -64,7 +64,9 @@ class Member:
         """
         # ========= 蔵書が貸出可能かどうかを判定する ==========
         self._ensure_not_exceed_loan_limit()  # 貸出上限冊数に達していないことを確認する
-        self._ensure_no_overdue_loans()  # 未返却で延滞中の蔵書がないことを確認する
+        self._ensure_no_overdue_loans(
+            loan_date
+        )  # 未返却で延滞中の蔵書がないことを確認する
         self._ensure_not_already_borrowed(
             book_copy_id
         )  # 同じ蔵書を同じ会員が同時に重複して借りられない
@@ -78,12 +80,14 @@ class Member:
         self._loans[loan.id] = loan  # Memberの貸出情報に追加
         return loan
 
-    def return_book(self, loan_id: LoanId, loan_date: date) -> None:
+    def return_book(self, loan_id: LoanId, return_date: date) -> None:
         """
         利用者が蔵書を返却する処理を行う
         """
         loan = self.loans.get(loan_id)
-        loan.mark_as_returned(loan_date)  # 貸出情報の返却日を更新する
+        if loan is None:
+            raise NotFoundError("The loan is not found")
+        loan.mark_as_returned(return_date)  # 貸出情報の返却日を更新する
 
     # Private Methods
     def _ensure_not_exceed_loan_limit(self):
@@ -98,14 +102,14 @@ class Member:
                 "You have reached your loan limit. Please return a book before borrowing another."
             )
 
-    def _ensure_no_overdue_loans(self):
+    def _ensure_no_overdue_loans(self, on_date: date):
         """
         未返却で延滞中の蔵書がないことを確認する
         """
         overdue_loans = [
             loan
             for loan in self._loans.values()
-            if not loan.is_returned and loan.is_overdue
+            if not loan.is_returned and loan.is_overdue(on_date)
         ]
         if overdue_loans:
             raise ValueError(
@@ -116,5 +120,7 @@ class Member:
         """
         同じ蔵書を同じ会員が現在借りていないことを確認する
         """
-        if book_copy_id in [loan.book_copy_id for loan in self._loans.values()]:
+        if book_copy_id in [
+            loan.book_copy_id for loan in self._loans.values() if not loan.is_returned
+        ]:
             raise ValueError("You have already borrowed this book.")
