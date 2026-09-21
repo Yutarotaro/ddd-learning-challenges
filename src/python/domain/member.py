@@ -57,6 +57,12 @@ class Member:
         """
         return self._loans
 
+    def get_loan(self, loan_id: LoanId):
+        loan = self._loans.get(loan_id)
+        if loan is None:
+            raise NotFoundError("The loan is not found")
+        return loan
+
     def borrow_book(self, book_copy_id: BookCopyId, loan_date: date) -> Loan:
         """
         利用者が蔵書を借りる処理を行う
@@ -84,9 +90,7 @@ class Member:
         """
         利用者が蔵書を返却する処理を行う
         """
-        loan = self.loans.get(loan_id)
-        if loan is None:
-            raise NotFoundError("The loan is not found")
+        loan = self.get_loan(loan_id)
         loan.mark_as_returned(return_date)  # 貸出情報の返却日を更新する
 
     # Private Methods
