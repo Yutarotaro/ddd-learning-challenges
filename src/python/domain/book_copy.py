@@ -47,8 +47,10 @@ class BookCopy:
         # 蔵書の貸出状況を更新する
         self._status = LendingStatus.LENT_OUT
 
-    def mark_as_return(self):
+    def mark_as_returned(self):
         """ "
         蔵書を返却する
         """
+        if self._status != LendingStatus.LENT_OUT:
+            raise ValueError("Book copy is not lent out")
         self._status = LendingStatus.AVAILABLE
