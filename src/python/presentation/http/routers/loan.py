@@ -1,10 +1,8 @@
 from fastapi import APIRouter, Depends
 
-
 from presentation.http.models.loan import BorrowBookRequest, BorrowBookResponse
 from application.usecases.borrow_book import BorrowBookUseCase
-from domain.member import MemberId
-from domain.book_copy import BookCopyId
+from domain.value_objects import BookCopyId, MemberId
 
 router = APIRouter(
     prefix="/loans",
@@ -12,9 +10,14 @@ router = APIRouter(
 )
 
 
+def get_borrow_book_use_case() -> BorrowBookUseCase:
+    raise NotImplementedError
+
+
 @router.post("")
 def borrow_book(
-    request: BorrowBookRequest, usecase: BorrowBookUseCase = Depends(...)
+    request: BorrowBookRequest,
+    usecase: BorrowBookUseCase = Depends(get_borrow_book_use_case),
 ) -> BorrowBookResponse:
     loan_id = usecase.execute(
         member_id=MemberId(request.member_id),
